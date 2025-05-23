@@ -84,6 +84,7 @@ class F110Env(gym.Env):
 
     def __init__(self, **kwargs):
         self.throttled_printer = ThrottledPrinter(min_interval=0.5)
+        self.unthrottled_printer = ThrottledPrinter(min_interval=1e-9)
 
         self.render_mode = kwargs['render_mode']
         print('Render mode:', self.render_mode)
@@ -203,6 +204,14 @@ class F110Env(gym.Env):
 
         self.m_yaw_penalty = (self.upper_bound_penalty_yaw_collision - self.lower_bound_penalty_yaw_collision) / np.pi
         self.q_yaw_penalty = self.lower_bound_penalty_yaw_collision
+
+        try:
+            # How many atomic simulation steps to take before the next parameter update
+            self.n_steps = kwargs['n_steps']
+            if self.n_steps <= 0:
+                raise ValueError('n_steps must be positive')
+        except:
+            raise ValueError("Number of steps not provided. Please provide n_steps.")
 
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
         # Create a single row vector for one agent
@@ -392,14 +401,21 @@ class F110Env(gym.Env):
 
         s, d, status = self.raceline.get_nearest_index(x, y, self.previous_s)
 
+        # check done
+        done, done_collisions, done_laps_ego, done_off_track_ego, lap_info = self._check_done(s)
+
         if self.previous_s is not None:
-            # TODO: handle periodicity of s
-            delta_s = s - self.previous_s
+            if s < self.previous_s and lap_info['lap_completed']:
+                # We are wrapping around the raceline
+                delta_s = (s + self.raceline.total_s) - self.previous_s
+            else:
+                delta_s = s - self.previous_s
         else:
             delta_s = math.sqrt((x - old_x) ** 2 + (y - old_y) ** 2)
 
-        # check done
-        done, done_collisions, done_laps_ego, done_off_track_ego, lap_info = self._check_done(s)
+        if delta_s > 2.0:
+            # TODO: test if it ever happens
+            self.unthrottled_printer.print(f'delta_s is too large: {delta_s}', 'red')
 
         if self.reward_function == 's':
             reward = self.w_s * delta_s
@@ -418,6 +434,7 @@ class F110Env(gym.Env):
             if done_laps_ego:
                 reward += 10
 
+        # TODO: remove
         print('delta_s:', delta_s)
         print('d:', d)
         print('d reward:', -self.w_d * d)

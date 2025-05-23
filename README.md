@@ -70,7 +70,8 @@ def test_f110_env_rendering():
                    w_s=1.0,
                    w_d=0.3,
                    lower_bound_penalty_yaw_collision=1.0,
-                   upper_bound_penalty_yaw_collision=2.0)
+                   upper_bound_penalty_yaw_collision=2.0,
+                   n_steps=10,)
 
     # Set initial poses for agents
     # Format: [x, y, theta] for each agent

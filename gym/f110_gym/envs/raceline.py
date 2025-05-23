@@ -80,7 +80,7 @@ class Raceline:
 
     def reset(self, s):
         # `s` is the starting position of the car in the raceline
-        # TODO: update self.zones with zone 0 equal to the starting position
+        # TODO: update self.zones with zone 0 equal to the starting position (i.e., handle dynamic finish line)
 
         self.visit_order.clear()
         self.current_zone = -1
