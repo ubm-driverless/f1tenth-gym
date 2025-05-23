@@ -36,6 +36,8 @@ import numpy as np
 from f110_gym.envs.dynamic_models import vehicle_dynamics_st, pid
 from f110_gym.envs.laser_models import ScanSimulator2D, check_ttc_jit, ray_cast
 from f110_gym.envs.collision_models import get_vertices, collision_multiple
+from f110_gym.envs.utils import AngleOp
+
 
 class Integrator(Enum):
     RK4 = 1
@@ -401,10 +403,12 @@ class RaceCar(object):
             raise SyntaxError(f"Invalid Integrator Specified. Provided {self.integrator.name}. Please choose RK4 or Euler")
 
         # bound yaw angle
-        if self.state[4] > 2*np.pi:
-            self.state[4] = self.state[4] - 2*np.pi
-        elif self.state[4] < 0:
-            self.state[4] = self.state[4] + 2*np.pi
+        # if self.state[4] > 2*np.pi:
+        #     self.state[4] = self.state[4] - 2*np.pi
+        # elif self.state[4] < 0:
+        #     self.state[4] = self.state[4] + 2*np.pi
+
+        self.state[4] = AngleOp.normalize_angle(self.state[4])
 
         # update scan
         current_scan = RaceCar.scan_simulator.scan(np.append(self.state[0:2], self.state[4]), self.scan_rng)
