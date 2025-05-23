@@ -486,8 +486,9 @@ class Simulator(object):
         self.params = params
         self.agent_poses = np.empty((self.num_agents, 3))
         self.agents = []
-        self.collisions = np.zeros((self.num_agents, ))
-        self.collision_idx = -1 * np.ones((self.num_agents, ))
+        self.polygon_collisions = np.zeros((self.num_agents, ))
+        self.lidar_collisions = np.zeros((self.num_agents, ))
+        self.polygon_collision_idx = -1 * np.ones((self.num_agents, ))
 
         # initializing agents
         for i in range(self.num_agents):
@@ -549,7 +550,7 @@ class Simulator(object):
         all_vertices = np.empty((self.num_agents, 4, 2))
         for i in range(self.num_agents):
             all_vertices[i, :, :] = get_vertices(np.append(self.agents[i].state[0:2],self.agents[i].state[4]), self.params['length'], self.params['width'])
-        self.collisions, self.collision_idx = collision_multiple(all_vertices)
+        self.polygon_collisions, self.polygon_collision_idx = collision_multiple(all_vertices)
 
 
     def step(self, control_inputs):
@@ -588,7 +589,7 @@ class Simulator(object):
 
             # update agent collision with environment
             if agent.in_collision:
-                self.collisions[i] = 1.
+                self.lidar_collisions[i] = 1.
 
         # fill in observations
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
@@ -601,7 +602,8 @@ class Simulator(object):
             'linear_vels_x': [],
             'linear_vels_y': [],
             'ang_vels_z': [],
-            'collisions': self.collisions}
+            'polygon_collisions': self.polygon_collisions,
+            'lidar_collisions': self.lidar_collisions}
         for i, agent in enumerate(self.agents):
             observations['scans'].append(agent_scans[i])
             observations['poses_x'].append(agent.state[0])

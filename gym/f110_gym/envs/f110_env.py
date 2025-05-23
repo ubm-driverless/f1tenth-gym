@@ -242,7 +242,8 @@ class F110Env(gym.Env):
         self.poses_x = []
         self.poses_y = []
         self.poses_theta = []
-        self.collisions = np.zeros((self.num_agents, ))
+        self.polygon_collisions = np.zeros((self.num_agents, ))
+        self.lidar_collisions = np.zeros((self.num_agents, ))
         self.off_track = np.zeros((self.num_agents, ))
 
         # race info
@@ -287,7 +288,8 @@ class F110Env(gym.Env):
             info (dict): current information of the environment
         """
         info = {
-            'collisions': self.collisions
+            'polygon_collisions': self.polygon_collisions,
+            'lidar_collisions': self.lidar_collisions
         }
         return info
 
@@ -344,13 +346,14 @@ class F110Env(gym.Env):
             if F110Env.renderer is not None:
                 F110Env.renderer.draw_point(self.poses_x[i], self.poses_y[i], size=10)
 
-        done_collisions = bool(self.collisions[self.ego_idx])
+        done_poly_collisions = bool(self.polygon_collisions[self.ego_idx])
+        done_lidar_collisions = bool(self.lidar_collisions[self.ego_idx])
         done_laps_ego = bool(self.ego_lap_count >= 2)
         done_off_track_ego = bool(self.off_track[self.ego_idx])
 
-        done = (self.collisions[self.ego_idx]) or self.ego_lap_count >= 2 or self.off_track[self.ego_idx] == 1.
+        done = done_off_track_ego or done_poly_collisions or done_lidar_collisions
         
-        return bool(done), done_collisions, done_laps_ego, done_off_track_ego, lap_info
+        return done, done_poly_collisions, done_lidar_collisions, done_laps_ego, done_off_track_ego, lap_info
 
     def _update_state(self, obs_dict):
         """
@@ -365,7 +368,8 @@ class F110Env(gym.Env):
         self.poses_x = obs_dict['poses_x']
         self.poses_y = obs_dict['poses_y']
         self.poses_theta = obs_dict['poses_theta']
-        self.collisions = obs_dict['collisions']
+        self.polygon_collisions = obs_dict['polygon_collisions']
+        self.lidar_collisions = obs_dict['lidar_collisions']
 
     def step(self, action):
         """
@@ -396,9 +400,17 @@ class F110Env(gym.Env):
         nearest_index, s, d, status = self.raceline.get_nearest_index(x, y, self.previous_s)
 
         # check done
-        done, done_collisions, done_laps_ego, done_off_track_ego, lap_info = self._check_done(s)
+        done, done_poly_collisions, done_lidar_collisions, done_laps_ego, done_off_track_ego, lap_info = (
+            self._check_done(s))
 
         if self.previous_s is not None:
+
+            # TODO: to remove after testing
+            if s < self.previous_s:
+                assert lap_info['lap_completed'] == True
+            if lap_info['lap_completed']:
+                assert s < self.previous_s
+
             if s < self.previous_s and lap_info['lap_completed']:
                 # We are wrapping around the raceline
                 delta_s = (s + self.raceline.total_s) - self.previous_s
@@ -418,21 +430,23 @@ class F110Env(gym.Env):
         else:
             raise ValueError(f"Unknown reward function: {self.reward_function}")
 
-        terminated = done  # if not recoverable off track or laps completed
-        truncated = False  # if time limit is reached
+        terminated = done  # if not recoverable off track or collision with another agent
+        truncated = done_laps_ego  # if laps completed
 
-        # temporary reward system
-        if terminated:
-            if done_collisions or done_off_track_ego:
-                reward -= self.m_yaw_penalty * abs(AngleOp.angle_diff(self.raceline.heading_spline(s), self.poses_theta[self.ego_idx])) + self.q_yaw_penalty
-            if done_laps_ego:
-                reward += 10
+        if done_off_track_ego or done_lidar_collisions:
+            # Here we are just assuming negative reward for going off track, we are not considering collisions with
+            # other agents
+            reward -= self.m_yaw_penalty * abs(AngleOp.angle_diff(self.raceline.heading_spline(s), self.poses_theta[self.ego_idx])) + self.q_yaw_penalty
 
-        # TODO: remove
-        print('delta_s:', delta_s)
-        print('d:', d)
-        print('d reward:', -self.w_d * d)
-        print('reward:', reward)
+        if done_poly_collisions:
+            reward -= 1.0
+
+        if done_laps_ego:
+            # reward += 10
+            # We make the RL model confused by giving it a reward for completing the lap. In the observation space,
+            # there is no proxy for lap completion, so that reward would be completely unexpected. Then, let's
+            # just truncate the episode.
+            print('Ego completed 2 laps!')
 
         info = self._get_info()
         info.update({'legacy_obs': obs})
@@ -494,7 +508,8 @@ class F110Env(gym.Env):
             self.poses_x.append(poses[i, 0])
             self.poses_y.append(poses[i, 1])
             self.poses_theta.append(poses[i, 2])
-        self.collisions = np.zeros((self.num_agents,))
+        self.polygon_collisions = np.zeros((self.num_agents,))
+        self.lidar_collisions = np.zeros((self.num_agents,))
         self.off_track = np.zeros((self.num_agents,))
 
         self.lap_times = np.zeros((self.num_agents,))
