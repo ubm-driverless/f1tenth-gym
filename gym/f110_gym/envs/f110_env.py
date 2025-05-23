@@ -207,14 +207,6 @@ class F110Env(gym.Env):
         self.m_yaw_penalty = (self.upper_bound_penalty_yaw_collision - self.lower_bound_penalty_yaw_collision) / np.pi
         self.q_yaw_penalty = self.lower_bound_penalty_yaw_collision
 
-        try:
-            # How many atomic simulation steps to take before the next parameter update
-            self.n_steps = kwargs['n_steps']
-            if self.n_steps <= 0:
-                raise ValueError('n_steps must be positive')
-        except:
-            raise ValueError("Number of steps not provided. Please provide n_steps.")
-
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
         # Create a single row vector for one agent
         single_agent_low = np.array(
