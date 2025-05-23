@@ -25,12 +25,17 @@ class Raceline:
         self.s = data[:, 0].astype(np.float32).tolist()
         self.x = data[:, 1].astype(np.float32).tolist()
         self.y = data[:, 2].astype(np.float32).tolist()
-        # TODO: fix this upstream
+        # TODO: fix this upstream (now fixed). remove this when the raceline csv is fixed
         self.width_right = data[:, 4].astype(np.float32).tolist()
         self.width_left = data[:, 3].astype(np.float32).tolist()
         self.heading = data[:, 5].astype(np.float32).tolist()
         self.curvature = data[:, 6].astype(np.float32).tolist()
         self.speed = data[:, 7].astype(np.float32).tolist()
+
+        self.s_delta = np.zeros(self.n_points, dtype=np.float32)
+        for i, (s_curr, s_next) in enumerate(zip(self.s[:-1], self.s[1:])):
+            self.s_delta[i] = s_next - s_curr
+        self.s_delta = self.s_delta.astype(np.float32).tolist()
 
         # Compute the two splines of x and y based on s
         # These spline handle the periodicity of the raceline, so you can input values outside the [0, total_s] range
@@ -216,10 +221,10 @@ class Raceline:
             # Check if the `d` is less than the maximum width of the raceline at that point
             if d > 0:
                 if d < self.width_right_spline(refined_s):
-                    return refined_s, d, 'normal'
+                    return i, refined_s, d, 'normal'
             else:
                 if -d < self.width_left_spline(refined_s):
-                    return refined_s, d, 'normal'
+                    return i, refined_s, d, 'normal'
 
         # If we are here, we are probably off track
         if previous_s is not None:
@@ -235,15 +240,15 @@ class Raceline:
             s_list = np.array(s_list)
             s_list_diff = np.abs(s_list - previous_s)
             closest_candidate_index = np.argmin(s_list_diff) // 3
-            closest_index = candidates_indexes[closest_candidate_index]
+            nearest_index = candidates_indexes[closest_candidate_index]
 
             status = 'off_track'
         else:
             # If no previous s is available, return the s of the current closest candidate
-            closest_index = candidates_indexes[0]
+            nearest_index = candidates_indexes[0]
             status = 'no_previous_s'
 
-        return cache_results[closest_index][0], cache_results[closest_index][1], status
+        return nearest_index, cache_results[nearest_index][0], cache_results[nearest_index][1], status
 
     #@njit(cache=True)
     def get_normal(self, s):

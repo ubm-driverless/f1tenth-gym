@@ -155,6 +155,8 @@ class F110Env(gym.Env):
         # simulation parameters
         try:
             self.num_agents = kwargs['num_agents']
+            if self.num_agents <= 0:
+                raise ValueError('Number of agents must be positive')
         except:
             self.num_agents = 1
 
@@ -399,7 +401,7 @@ class F110Env(gym.Env):
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
         x, y = observation[self.ego_idx, 0], observation[self.ego_idx, 1]
 
-        s, d, status = self.raceline.get_nearest_index(x, y, self.previous_s)
+        nearest_index, s, d, status = self.raceline.get_nearest_index(x, y, self.previous_s)
 
         # check done
         done, done_collisions, done_laps_ego, done_off_track_ego, lap_info = self._check_done(s)
@@ -524,7 +526,7 @@ class F110Env(gym.Env):
             'lap_counts': info['legacy_obs']['lap_counts']
             }
 
-        s, _, _ = self.raceline.get_nearest_index(obs[self.ego_idx, 0], obs[self.ego_idx, 1], previous_s=None)
+        nearest_index, s, _, _ = self.raceline.get_nearest_index(obs[self.ego_idx, 0], obs[self.ego_idx, 1], previous_s=None)
         self.raceline.reset(s)
         self.previous_s = None
         self.ego_lap_count = 0
