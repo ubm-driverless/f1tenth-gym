@@ -23,9 +23,9 @@ num_agents = 1
 
 
 single_agent_low = np.array(
-    [-np.inf, -np.inf, params['s_min'], params['v_min'], 0.0, params['sv_min'], -np.inf], dtype=np.float32)
+    [-np.inf, -np.inf, params['s_min'], params['v_min'], -np.pi, params['sv_min'], -np.inf], dtype=np.float32)
 single_agent_high = np.array(
-    [+np.inf, +np.inf, params['s_max'], params['v_max'], 2 * np.pi, params['sv_max'], +np.inf], dtype=np.float32)
+    [+np.inf, +np.inf, params['s_max'], params['v_max'], np.pi, params['sv_max'], +np.inf], dtype=np.float32)
 
 # Duplicate for all agents to match the shape (num_agents, 7)
 obs_low = np.tile(single_agent_low, (num_agents, 1))
@@ -39,8 +39,8 @@ observation_space = gym.spaces.Box(
     dtype=np.float32
 )
 
-single_agent_low = np.array([-np.inf, params['s_min']], dtype=np.float32)
-single_agent_high = np.array([+np.inf, params['s_max']], dtype=np.float32)
+single_agent_low = np.array([params['s_min'], 0.0], dtype=np.float32)
+single_agent_high = np.array([params['s_max'], +np.inf], dtype=np.float32)
 
 action_low = np.tile(single_agent_low, (num_agents, 1))
 action_high = np.tile(single_agent_high, (num_agents, 1))
@@ -65,7 +65,13 @@ def test_f110_env_rendering():
                    timestep=0.01,               # Simulation timestep
                    render_mode='human',         # None, 'human', 'human_fast'. If None, no rendering is done
                    points_in_foreground=False,  # Whether to render trail points of the car path in the foreground
-                   raceline_path=raceline_filepath)
+                   raceline_path=raceline_filepath,
+                   reward_function='s',         # 's', 's+d'
+                   w_s=1.0,
+                   w_d=0.3,
+                   lower_bound_penalty_yaw_collision=1.0,
+                   upper_bound_penalty_yaw_collision=2.0,
+                   n_steps=10,)
 
     # Set initial poses for agents
     # Format: [x, y, theta] for each agent

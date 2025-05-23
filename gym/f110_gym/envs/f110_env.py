@@ -11,17 +11,20 @@ import gymnasium as gym
 # base classes
 from f110_gym.envs.base_classes import Simulator, Integrator
 from f110_gym.envs.raceline import Raceline
+from f110_gym.envs.utils import AngleOp
 from f110_gym import ThrottledPrinter
 
 # others
 import numpy as np
 import os
+import math
 import time
 import yaml
 from PIL import Image
 
 # gl
 import pyglet
+
 pyglet.options['debug_gl'] = False
 
 # constants
@@ -81,6 +84,7 @@ class F110Env(gym.Env):
 
     def __init__(self, **kwargs):
         self.throttled_printer = ThrottledPrinter(min_interval=0.5)
+        self.unthrottled_printer = ThrottledPrinter(min_interval=1e-9)
 
         self.render_mode = kwargs['render_mode']
         print('Render mode:', self.render_mode)
@@ -119,6 +123,8 @@ class F110Env(gym.Env):
         self.map_img[self.map_img <= 128.] = 0.
         self.map_img[self.map_img > 128.] = 255.
 
+        # show_map(self.map_name + self.map_ext)
+
         try:
             self.raceline_path = kwargs['raceline_path']
         except:
@@ -149,6 +155,8 @@ class F110Env(gym.Env):
         # simulation parameters
         try:
             self.num_agents = kwargs['num_agents']
+            if self.num_agents <= 0:
+                raise ValueError('Number of agents must be positive')
         except:
             self.num_agents = 1
 
@@ -174,12 +182,45 @@ class F110Env(gym.Env):
         except:
             self.points_in_foreground = False
 
+        try:
+            self.reward_function = kwargs['reward_function']
+        except:
+            self.reward_function = 's'
+        try:
+            self.w_s = kwargs['w_s']
+            self.w_d = kwargs['w_d']
+            if self.w_s < 0.0 or self.w_d < 0.0:
+                raise ValueError("Reward weights must be non-negative.")
+        except:
+            raise ValueError("Reward weights not provided. Please provide w_s and w_d.")
+        try:
+            self.lower_bound_penalty_yaw_collision = kwargs['lower_bound_penalty_yaw_collision']
+            self.upper_bound_penalty_yaw_collision = kwargs['upper_bound_penalty_yaw_collision']
+            if self.lower_bound_penalty_yaw_collision < 0.0 or self.upper_bound_penalty_yaw_collision < 0.0:
+                raise ValueError("Yaw collision penalty bounds must be non-negative.")
+            if self.lower_bound_penalty_yaw_collision > self.upper_bound_penalty_yaw_collision:
+                raise ValueError("Lower bound penalty yaw collision must be less than upper bound penalty yaw collision.")
+        except:
+            raise ValueError("Yaw collision penalty bounds not provided. Please provide "
+                             "lower_bound_penalty_yaw_collision and upper_bound_penalty_yaw_collision.")
+
+        self.m_yaw_penalty = (self.upper_bound_penalty_yaw_collision - self.lower_bound_penalty_yaw_collision) / np.pi
+        self.q_yaw_penalty = self.lower_bound_penalty_yaw_collision
+
+        try:
+            # How many atomic simulation steps to take before the next parameter update
+            self.n_steps = kwargs['n_steps']
+            if self.n_steps <= 0:
+                raise ValueError('n_steps must be positive')
+        except:
+            raise ValueError("Number of steps not provided. Please provide n_steps.")
+
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
         # Create a single row vector for one agent
         single_agent_low = np.array(
-            [-np.inf, -np.inf, self.params['s_min'], self.params['v_min'], 0.0, self.params['sv_min'], -np.inf], dtype=np.float32)
+            [-np.inf, -np.inf, self.params['s_min'], self.params['v_min'], -np.pi, self.params['sv_min'], -np.inf], dtype=np.float32)
         single_agent_high = np.array(
-            [+np.inf, +np.inf, self.params['s_max'], self.params['v_max'], 2 * np.pi, self.params['sv_max'], +np.inf], dtype=np.float32)
+            [+np.inf, +np.inf, self.params['s_max'], self.params['v_max'], np.pi, self.params['sv_max'], +np.inf], dtype=np.float32)
 
         # Duplicate for all agents to match the shape (num_agents, 7)
         obs_low = np.tile(single_agent_low, (self.num_agents, 1))
@@ -193,8 +234,8 @@ class F110Env(gym.Env):
             dtype=np.float32
         )
 
-        single_agent_low = np.array([-np.inf, self.params['s_min']], dtype=np.float32)
-        single_agent_high = np.array([+np.inf, self.params['s_max']], dtype=np.float32)
+        single_agent_low = np.array([self.params['s_min'], 0.0], dtype=np.float32)
+        single_agent_high = np.array([self.params['s_max'], np.inf], dtype=np.float32)
 
         action_low = np.tile(single_agent_low, (self.num_agents, 1))
         action_high = np.tile(single_agent_high, (self.num_agents, 1))
@@ -347,12 +388,11 @@ class F110Env(gym.Env):
             done (bool): if the simulation is done
             info (dict): auxiliary information dictionary
         """
-        
+
+        old_x, old_y = self.poses_x[self.ego_idx], self.poses_y[self.ego_idx]
+
         # call simulation step
         obs = self.sim.step(action)
-
-        # reward = self.timestep
-        reward = -1
         
         # update data member
         self._update_state(obs)
@@ -361,21 +401,46 @@ class F110Env(gym.Env):
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
         x, y = observation[self.ego_idx, 0], observation[self.ego_idx, 1]
 
-        s, d, status = self.raceline.get_nearest_index(x, y, self.previous_s)
+        nearest_index, s, d, status = self.raceline.get_nearest_index(x, y, self.previous_s)
 
         # check done
         done, done_collisions, done_laps_ego, done_off_track_ego, lap_info = self._check_done(s)
 
-        # reward = ... # TODO: based on raceline `s` and `d`
-        terminated = done # if not recoverable off track or laps completed
+        if self.previous_s is not None:
+            if s < self.previous_s and lap_info['lap_completed']:
+                # We are wrapping around the raceline
+                delta_s = (s + self.raceline.total_s) - self.previous_s
+            else:
+                delta_s = s - self.previous_s
+        else:
+            delta_s = math.sqrt((x - old_x) ** 2 + (y - old_y) ** 2)
+
+        if delta_s > 2.0:
+            # TODO: test if it ever happens
+            self.unthrottled_printer.print(f'delta_s is too large: {delta_s}', 'red')
+
+        if self.reward_function == 's':
+            reward = self.w_s * delta_s
+        elif self.reward_function == 's+d':
+            reward = self.w_s * delta_s - self.w_d * abs(d)
+        else:
+            raise ValueError(f"Unknown reward function: {self.reward_function}")
+
+        terminated = done  # if not recoverable off track or laps completed
         truncated = False  # if time limit is reached
 
         # temporary reward system
         if terminated:
             if done_collisions or done_off_track_ego:
-                reward -= 100
+                reward -= self.m_yaw_penalty * abs(AngleOp.angle_diff(self.raceline.heading_spline(s), self.poses_theta[self.ego_idx])) + self.q_yaw_penalty
             if done_laps_ego:
-                reward += 100
+                reward += 10
+
+        # TODO: remove
+        print('delta_s:', delta_s)
+        print('d:', d)
+        print('d reward:', -self.w_d * d)
+        print('reward:', reward)
 
         info = self._get_info()
         info.update({'legacy_obs': obs})
@@ -433,6 +498,10 @@ class F110Env(gym.Env):
         self.poses_x = []
         self.poses_y = []
         self.poses_theta = []
+        for i in range(self.num_agents):
+            self.poses_x.append(poses[i, 0])
+            self.poses_y.append(poses[i, 1])
+            self.poses_theta.append(poses[i, 2])
         self.collisions = np.zeros((self.num_agents,))
         self.off_track = np.zeros((self.num_agents,))
 
@@ -457,7 +526,7 @@ class F110Env(gym.Env):
             'lap_counts': info['legacy_obs']['lap_counts']
             }
 
-        s, _, _ = self.raceline.get_nearest_index(obs[self.ego_idx, 0], obs[self.ego_idx, 1], previous_s=None)
+        nearest_index, s, _, _ = self.raceline.get_nearest_index(obs[self.ego_idx, 0], obs[self.ego_idx, 1], previous_s=None)
         self.raceline.reset(s)
         self.previous_s = None
         self.ego_lap_count = 0
@@ -535,3 +604,33 @@ class F110Env(gym.Env):
             time.sleep(1.0 / self.metadata['render_fps'])
         elif self.render_mode == 'human_fast':
             pass
+
+
+def show_map(image_path):
+    """
+    Show the map image using matplotlib
+    """
+    import matplotlib.pyplot as plt
+    from PIL import Image
+
+    # Load the image
+    image = Image.open(image_path)
+
+    # Flip the image
+    flipped_image = image.transpose(Image.FLIP_TOP_BOTTOM)
+
+    # Plot both images side by side
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+
+    # Original image
+    axes[0].imshow(image)
+    axes[0].set_title("Original Image")
+    axes[0].axis('off')
+
+    # Flipped image
+    axes[1].imshow(flipped_image)
+    axes[1].set_title("Flipped Image")
+    axes[1].axis('off')
+
+    plt.tight_layout()
+    plt.show()
