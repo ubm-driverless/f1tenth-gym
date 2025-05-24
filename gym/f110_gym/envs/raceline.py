@@ -58,9 +58,9 @@ class Raceline:
         self.speed = self.speed[:-1]
 
         self.zones_length = 2.0 # meters
-        self.zones = {0: (0.0, self.zones_length),
-                      1: (0.33 * self.total_s, 0.33 * self.total_s + self.zones_length),
-                      2: (0.66 * self.total_s, 0.66 * self.total_s + self.zones_length)}
+        self.zones = {0: (0.0, self.zones_length, False),
+                      1: (0.33 * self.total_s, 0.33 * self.total_s + self.zones_length, False),
+                      2: (0.66 * self.total_s, 0.66 * self.total_s + self.zones_length, False)}
         self.visit_order = deque(maxlen=4)
         # Legend:
         # -1: not in any zone (unclaimed area)
@@ -71,21 +71,38 @@ class Raceline:
         self.start_time = None
 
         # Validate zones
-        for zone, (start, end) in self.zones.items():
+        for zone, (start, end, _) in self.zones.items():
             if start < 0 or end > self.total_s:
                 raise ValueError(f"Zone {zone} is out of raceline bounds: ({start}, {end})")
         for i in range(len(self.zones) - 1):
             current_zone = i
-            current_start, current_end = self.zones[current_zone]
+            current_start, current_end, _ = self.zones[current_zone]
             next_zone = i + 1
-            next_start, next_end = self.zones[next_zone]
+            next_start, next_end, _ = self.zones[next_zone]
             if current_end > next_start:
                 raise ValueError(
                     f"Zone {current_zone} (end: {current_end}) overlaps with zone {next_zone} (start: {next_start})")
 
     def reset(self, s):
         # `s` is the starting position of the car in the raceline
-        # TODO: update self.zones with zone 0 equal to the starting position (i.e., handle dynamic finish line)
+
+        # Update the zones based on the starting position. Zone 0 is associated with the starting position.
+        len_zones = len(self.zones)
+        for zone in range(len_zones):
+            start, end, end_wrapped = self.zones[zone]
+
+            new_start = (start + s) % self.total_s
+            new_end = (end + s) % self.total_s
+
+            end_wrapped = False
+            if new_start > start and new_end < end:
+                end_wrapped = True
+
+            self.zones[zone] = (new_start, new_end, end_wrapped)
+
+        # Print new zones
+        for zone, (start, end, end_wrapped) in self.zones.items():
+            print(f"Zone {zone}: ({start}, {end}) - Wrapped: {end_wrapped}")
 
         self.visit_order.clear()
         self.current_zone = -1
@@ -103,18 +120,31 @@ class Raceline:
 
         # Get zone the car is currently in
         car_zone = -1
-        for zone, (start, end) in self.zones.items():
-            if start < s < end:
-                car_zone = zone
-                break
+        for zone, (start, end, end_wrapped) in self.zones.items():
+            if not end_wrapped:
+                if start <= s < end:
+                    car_zone = zone
+                    break
+            else:
+                if start <= s or s < end:
+                    car_zone = zone
+                    break
         if car_zone == self.current_zone or car_zone == -1:
             # The car is in the same zone as before or not in any claimed zone
+
+            # TODO: remove this print statement in production
+            if car_zone != self.current_zone:
+                print('car exited zone:', self.current_zone)
+
             self.current_zone = car_zone
             return {'lap_completed': False, 'lap_time': np.inf, 'lap_orientation': None}
 
         # The car is in a new zone and that zone is not -1
         self.current_zone = car_zone
         self.visit_order.append(car_zone)
+
+        # TODO: remove this print statement in production
+        print('car entered zone:', car_zone)
 
         if len(self.visit_order) != 4:
             if car_zone == 0:

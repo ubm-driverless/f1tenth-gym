@@ -255,8 +255,12 @@ class F110Env(gym.Env):
         self.sim.set_map(self.map_path, self.map_ext)
 
         self.raceline = Raceline(self.raceline_path)
+        self.current_observation = None
         self.previous_s = None
+        self.ego_s = None
+        self.ego_d = None
         self.ego_lap_count = 0
+        self.raceline_zones_rendered = False
 
         # stateful observations for rendering
         self.render_obs = None
@@ -371,6 +375,19 @@ class F110Env(gym.Env):
         self.polygon_collisions = obs_dict['polygon_collisions']
         self.lidar_collisions = obs_dict['lidar_collisions']
 
+    def get_frenet_state(self):
+        """
+        Get the Frenet state of the ego vehicle
+
+        Args:
+            None
+
+        Returns:
+            s (float): distance along the raceline
+            d (float): lateral distance from the raceline
+        """
+        return self.ego_s, self.ego_d
+
     def step(self, action):
         """
         Step function for the gym env
@@ -381,7 +398,8 @@ class F110Env(gym.Env):
         Returns:
             obs (np.array): observation of the current step
             reward (float, default=self.timestep): step reward, currently is physics timestep
-            done (bool): if the simulation is done
+            terminated (bool): if the simulation is terminated
+            truncated (bool): if the simulation is truncated
             info (dict): auxiliary information dictionary
         """
 
@@ -393,9 +411,9 @@ class F110Env(gym.Env):
         # update data member
         self._update_state(obs)
 
-        observation = self._get_obs()
+        self.current_observation = self._get_obs()
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
-        x, y = observation[self.ego_idx, 0], observation[self.ego_idx, 1]
+        x, y = self.current_observation[self.ego_idx, 0], self.current_observation[self.ego_idx, 1]
 
         nearest_index, s, d, status = self.raceline.get_nearest_index(x, y, self.previous_s)
 
@@ -404,19 +422,33 @@ class F110Env(gym.Env):
             self._check_done(s))
 
         if self.previous_s is not None:
+            # If previous step was close to reach the last s in the forward direction
+            forward_close_to_last_s = bool((self.raceline.total_s - self.previous_s) < (self.raceline.total_s / 10))
+            forward_close_to_init_s = bool(s < (self.raceline.total_s / 10))
 
-            # TODO: to remove after testing
-            if s < self.previous_s:
-                assert lap_info['lap_completed'] == True
-            if lap_info['lap_completed']:
-                assert s < self.previous_s
+            # If the previous step was close to reach the initial s in the backward direction
+            backward_close_to_last_s = bool((self.raceline.total_s - s) < (self.raceline.total_s / 10))
+            backward_close_to_init_s = bool(self.previous_s < (self.raceline.total_s / 10))
 
-            if s < self.previous_s and lap_info['lap_completed']:
+            # We don't want to have both forward and backward close to the last s or initial s at the same time
+            # Even if it happens, the delta_s calculation does not fail anyway
+            if forward_close_to_last_s and forward_close_to_init_s:
+                assert not (backward_close_to_last_s and backward_close_to_init_s)
+
+            if backward_close_to_last_s and backward_close_to_init_s:
+                assert not (forward_close_to_last_s and forward_close_to_init_s)
+
+            if s < self.previous_s and forward_close_to_last_s and forward_close_to_init_s:
+                self.unthrottled_printer.print('We are wrapping around the raceline forward', 'yellow')
                 # We are wrapping around the raceline
                 delta_s = (s + self.raceline.total_s) - self.previous_s
+            elif self.previous_s < s and backward_close_to_last_s and backward_close_to_init_s:
+                self.unthrottled_printer.print('We are wrapping around the raceline backwards', 'yellow')
+                delta_s = (self.raceline.total_s - s) + self.previous_s
             else:
                 delta_s = s - self.previous_s
         else:
+            # Not projecting on s spline, so we just use the distance between the two points
             delta_s = math.sqrt((x - old_x) ** 2 + (y - old_y) ** 2)
 
         if delta_s > 2.0:
@@ -446,13 +478,15 @@ class F110Env(gym.Env):
             # We make the RL model confused by giving it a reward for completing the lap. In the observation space,
             # there is no proxy for lap completion, so that reward would be completely unexpected. Then, let's
             # just truncate the episode.
-            print('Ego completed 2 laps!')
+            self.throttled_printer.print(f'Ego completed {self.ego_lap_count} laps', 'green')
 
         info = self._get_info()
         info.update({'legacy_obs': obs})
         info.update(lap_info)
 
         self.previous_s = s
+        self.ego_s = s
+        self.ego_d = d
 
         self.lap_times[self.ego_idx] = lap_info['lap_time'] if lap_info['lap_completed'] else 0
         self.lap_counts[self.ego_idx] = self.ego_lap_count
@@ -470,7 +504,7 @@ class F110Env(gym.Env):
 
         F110Env.current_obs = obs
 
-        return observation, reward, terminated, truncated, info
+        return self.current_observation, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         """
@@ -533,10 +567,14 @@ class F110Env(gym.Env):
             'lap_counts': info['legacy_obs']['lap_counts']
             }
 
-        nearest_index, s, _, _ = self.raceline.get_nearest_index(obs[self.ego_idx, 0], obs[self.ego_idx, 1], previous_s=None)
+        nearest_index, s, d, _ = self.raceline.get_nearest_index(obs[self.ego_idx, 0], obs[self.ego_idx, 1], previous_s=None)
         self.raceline.reset(s)
+        self.current_observation = self._get_obs()
         self.previous_s = None
+        self.ego_s = s
+        self.ego_d = d
         self.ego_lap_count = 0
+        self.raceline_zones_rendered = False
         
         return obs, info
 
@@ -600,6 +638,23 @@ class F110Env(gym.Env):
             F110Env.renderer.update_raceline(self.raceline)
             
         F110Env.renderer.update_obs(self.render_obs)
+
+        # To draw left and right raceline boundaries
+        # x_left, y_left = self.raceline.to_cartesian(self.ego_s, -self.raceline.width_left_spline(self.ego_s))
+        # F110Env.renderer.draw_point(x_left, y_left, size=10, color=(255, 0, 0))
+        # x_right, y_right = self.raceline.to_cartesian(self.ego_s, self.raceline.width_right_spline(self.ego_s))
+        # F110Env.renderer.draw_point(x_right, y_right, size=10, color=(0, 200, 255))
+
+        # Render zones
+        colors = {0: (255, 128, 0), 1: (0, 0, 153), 2: (127, 0, 255)}
+
+        if not self.raceline_zones_rendered:
+            for zone_id, (s_start, s_end, _) in self.raceline.zones.items():
+                x_start, y_start = self.raceline.to_cartesian(s_start, 0.0)
+                x_end, y_end = self.raceline.to_cartesian(s_end, 0.0)
+                F110Env.renderer.draw_point(x_start, y_start, size=10, color=colors[zone_id])
+                F110Env.renderer.draw_point(x_end, y_end, size=10, color=colors[zone_id])
+            self.raceline_zones_rendered = True
 
         for render_callback in F110Env.render_callbacks:
             render_callback(F110Env.renderer)
