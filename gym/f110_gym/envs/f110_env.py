@@ -1,10 +1,3 @@
-# TODO: - check all todos
-#       - convert env to `gymnasium`
-#         - test reset method
-#       - add raceline to the env and draw it on the renderer (test pp on it)
-#         - improve reward considering distance to the raceline
-
-
 # gym imports
 import gymnasium as gym
 
@@ -254,6 +247,10 @@ class F110Env(gym.Env):
         self.sim = Simulator(self.params, self.num_agents, self.seed, time_step=self.timestep, integrator=self.integrator)
         self.sim.set_map(self.map_path, self.map_ext)
 
+        self.total_steps = 0
+        self.lap_steps = 0
+        self.last_lap_time = 0.0
+
         self.raceline = Raceline(self.raceline_path)
         self.current_observation = None
         self.previous_s = None
@@ -335,8 +332,13 @@ class F110Env(gym.Env):
         # This check is being done only for ego
         lap_info = self.raceline.is_lap_completed(s)
         lap_completed = lap_info['lap_completed']
-        lap_time = lap_info['lap_time']
         lap_orientation = lap_info['lap_orientation']
+
+        if lap_completed:
+            self.last_lap_time = self.lap_steps * self.timestep
+            # Overwriting real cpu time with the simulation time
+            lap_info['lap_time'] = self.last_lap_time
+            self.lap_steps = 0
 
         if lap_completed and lap_orientation == 'forward':
             self.ego_lap_count += 1
@@ -402,6 +404,9 @@ class F110Env(gym.Env):
             truncated (bool): if the simulation is truncated
             info (dict): auxiliary information dictionary
         """
+
+        self.total_steps += 1
+        self.lap_steps += 1
 
         old_x, old_y = self.poses_x[self.ego_idx], self.poses_y[self.ego_idx]
 
@@ -489,7 +494,7 @@ class F110Env(gym.Env):
         self.ego_s = s
         self.ego_d = d
 
-        self.lap_times[self.ego_idx] = lap_info['lap_time'] if lap_info['lap_completed'] else 0
+        self.lap_times[self.ego_idx] = self.last_lap_time
         self.lap_counts[self.ego_idx] = self.ego_lap_count
         obs['lap_times'] = self.lap_times
         obs['lap_counts'] = self.lap_counts
@@ -567,6 +572,10 @@ class F110Env(gym.Env):
             'lap_times': info['legacy_obs']['lap_times'],
             'lap_counts': info['legacy_obs']['lap_counts']
             }
+
+        self.total_steps = 0
+        self.lap_steps = 0
+        self.last_lap_time = 0.0
 
         nearest_index, s, d, _ = self.raceline.get_nearest_index(obs[self.ego_idx, 0], obs[self.ego_idx, 1], previous_s=None)
         self.raceline.reset(s)

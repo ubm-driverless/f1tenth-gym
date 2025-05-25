@@ -47,9 +47,8 @@ class Raceline:
         self.s = data[:, 0].astype(np.float32).tolist()
         self.x = data[:, 1].astype(np.float32).tolist()
         self.y = data[:, 2].astype(np.float32).tolist()
-        # TODO: fix this upstream (now fixed). remove this when the raceline csv is fixed
-        self.width_right = data[:, 4].astype(np.float32).tolist()
-        self.width_left = data[:, 3].astype(np.float32).tolist()
+        self.width_right = data[:, 3].astype(np.float32).tolist()
+        self.width_left = data[:, 4].astype(np.float32).tolist()
         self.heading = data[:, 5].astype(np.float32).tolist()
         self.curvature = data[:, 6].astype(np.float32).tolist()
         self.speed = data[:, 7].astype(np.float32).tolist()
@@ -247,12 +246,6 @@ class Raceline:
 
         # Order the indexes in terms of distance
         candidates_indexes.sort(key=lambda i: distances[i])
-        # candidate_distances = np.empty(len(candidates_indexes), dtype=np.float64)
-        # for idx in range(len(candidates_indexes)):
-        #     candidate_distances[idx] = distances[candidates_indexes[idx]]
-        # sorted_order = np.argsort(candidate_distances)
-        # sorted_candidates_indexes = [candidates_indexes[i] for i in sorted_order]
-        # candidates_indexes = sorted_candidates_indexes
 
         cache_results = {}
         for i in candidates_indexes:
@@ -464,17 +457,4 @@ def find_local_minima(distances):
 
     return minima_indices
 
-
-# TODO: is the raceline in the correct reference frame? also heading? yes, besides width left/right
-
 # raceline = Raceline('/home/edo/unibo/driverless/repos/ubm-f1tenth/raceline/csv/TUM_raceline/TUM_raceline_250514_084549.csv')
-#
-# import matplotlib.pyplot as plt
-#
-# #plt.plot(raceline.x, raceline.y, 'o')
-# #plt.plot(raceline.x_spline(raceline.s), raceline.y_spline(raceline.s), 'r-')
-# #plt.scatter(raceline.x[0], raceline.y[0], c='g', s=100, label='Start')
-# s_linspace = np.linspace(- raceline.total_s * 2 - 10, raceline.total_s * 2 + 10, 1000)
-# plt.plot(raceline.x_spline(s_linspace), raceline.y_spline(s_linspace), 'r-')
-# # plt.plot(s_linspace, raceline.curvature_spline(s_linspace), 'b-')
-# plt.show()
