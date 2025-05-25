@@ -590,6 +590,8 @@ class Simulator(object):
             # update agent collision with environment
             if agent.in_collision:
                 self.lidar_collisions[i] = 1.
+            else:
+                self.lidar_collisions[i] = 0.
 
         # fill in observations
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
@@ -625,7 +627,10 @@ class Simulator(object):
         Returns:
             None
         """
-        
+
+        self.lidar_collisions = np.zeros((self.num_agents, ))
+        self.polygon_collisions = np.zeros((self.num_agents, ))
+
         if poses.shape[0] != self.num_agents:
             raise ValueError('Number of poses for reset does not match number of agents.')
 

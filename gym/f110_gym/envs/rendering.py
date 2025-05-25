@@ -110,6 +110,13 @@ class EnvRenderer(pyglet.window.Window):
 
         self.fps_display = pyglet.window.FPSDisplay(self)
 
+        self.tracked_points = []
+
+    def remove_tracked_points(self):
+        for point in self.tracked_points:
+            point.delete()
+        self.tracked_points.clear()
+
     def update_raceline(self, raceline: Raceline):
         """
         Update the renderer to display the raceline in green.
@@ -125,7 +132,7 @@ class EnvRenderer(pyglet.window.Window):
             raise ValueError('Raceline not provided to the renderer')
 
         for x, y in zip(raceline.x, raceline.y):
-            self.draw_point(x, y, color=(0, 255, 0))
+            self.draw_point(x, y, color=(0, 255, 0), track=False)
 
     def update_map(self, map_path, map_ext):
         """
@@ -315,7 +322,7 @@ class EnvRenderer(pyglet.window.Window):
         # Remove default modelview matrix
         glPopMatrix()
 
-    def draw_point(self, x, y, color=(255, 0, 0), size=1.0):
+    def draw_point(self, x, y, color=(255, 0, 0), size=1.0, track=False):
         """
         Draw a point at the given coordinates
 
@@ -324,6 +331,7 @@ class EnvRenderer(pyglet.window.Window):
             y (float): y-coordinate in world space
             color (tuple): RGB color values (0-255)
             size (float): diameter of the point in pixels
+            track (bool): if False, the point will not be tracked by the batch, useful for points that are not updated frequently
 
         Returns:
             pyglet.graphics.vertex_list: The created vertex list
@@ -342,6 +350,9 @@ class EnvRenderer(pyglet.window.Window):
         point = self.batch.add(1, GL_POINTS, foreground if self.points_in_foreground else None,
                                ('v3f/stream', [scaled_x, scaled_y, 0.0]),
                                ('c3B/stream', color))
+
+        if track:
+            self.tracked_points.append(point)
 
         return point
 

@@ -122,8 +122,8 @@ class Raceline:
             self.zones[zone] = (new_start, new_end, end_wrapped)
 
         # Print new zones
-        for zone, (start, end, end_wrapped) in self.zones.items():
-            print(f"Zone {zone}: ({start}, {end}) - Wrapped: {end_wrapped}")
+        # for zone, (start, end, end_wrapped) in self.zones.items():
+        #     print(f"Zone {zone}: ({start}, {end}) - Wrapped: {end_wrapped}")
 
         self.visit_order.clear()
         self.current_zone = -1

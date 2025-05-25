@@ -79,8 +79,11 @@ class F110Env(gym.Env):
         self.throttled_printer = ThrottledPrinter(min_interval=0.5)
         self.unthrottled_printer = ThrottledPrinter(min_interval=1e-9)
 
-        self.render_mode = kwargs['render_mode']
-        print('Render mode:', self.render_mode)
+        try:
+            self.render_mode = kwargs['render_mode']
+            print('Render mode:', self.render_mode)
+        except:
+            self.render_mode = None
 
         # kwargs extraction
         try:
@@ -350,7 +353,7 @@ class F110Env(gym.Env):
                 self.throttled_printer.print(f"Agent {i} is off track: ({self.poses_x[i]}, {self.poses_y[i]})", 'yellow')
 
             if F110Env.renderer is not None:
-                F110Env.renderer.draw_point(self.poses_x[i], self.poses_y[i], size=10)
+                F110Env.renderer.draw_point(self.poses_x[i], self.poses_y[i], size=4, track=True)
 
         done_poly_collisions = bool(self.polygon_collisions[self.ego_idx])
         done_lidar_collisions = bool(self.lidar_collisions[self.ego_idx])
@@ -412,7 +415,7 @@ class F110Env(gym.Env):
 
         # call simulation step
         obs = self.sim.step(action)
-        
+
         # update data member
         self._update_state(obs)
 
@@ -444,12 +447,13 @@ class F110Env(gym.Env):
                 assert not (forward_close_to_last_s and forward_close_to_init_s)
 
             if s < self.previous_s and forward_close_to_last_s and forward_close_to_init_s:
-                self.unthrottled_printer.print('We are wrapping around the raceline forward', 'yellow')
+                # self.unthrottled_printer.print('We are wrapping around the raceline forward', 'yellow')
                 # We are wrapping around the raceline
                 delta_s = (s + self.raceline.total_s) - self.previous_s
             elif self.previous_s < s and backward_close_to_last_s and backward_close_to_init_s:
-                self.unthrottled_printer.print('We are wrapping around the raceline backwards', 'yellow')
-                delta_s = (self.raceline.total_s - s) + self.previous_s
+                # self.unthrottled_printer.print('We are wrapping around the raceline backwards', 'yellow')
+                # This should be positive if the controller is purposely driving backwards
+                delta_s = -((self.raceline.total_s - s) + self.previous_s)
             else:
                 delta_s = s - self.previous_s
         else:
@@ -458,7 +462,7 @@ class F110Env(gym.Env):
 
         if delta_s > 2.0:
             # TODO: test if it ever happens
-            self.unthrottled_printer.print(f'delta_s is too large: {delta_s}', 'red')
+            self.unthrottled_printer.print(f'delta_s is too large: {delta_s} - id: {self.total_steps}', 'red')
 
         if self.reward_function == 's':
             reward = self.w_s * delta_s
@@ -534,6 +538,25 @@ class F110Env(gym.Env):
                 poses = options['pose']
             elif 'poses' in options:
                 poses = options['poses']
+        else:
+            if self.num_agents != 1:
+                raise ValueError("Must specify either poses or poses for multiple agents.")
+
+            # We have to sample poses from the observation space
+            # Sample s between 0 and raceline total s
+            s_start = np.random.uniform(0, self.raceline.total_s)
+            left_d = -self.raceline.width_left_spline(s_start)
+            right_d = self.raceline.width_right_spline(s_start)
+
+            left_d = left_d + 0.2 if left_d + 0.2 <= 0 else left_d
+            right_d = right_d - 0.2 if right_d - 0.2 >= 0 else right_d
+            d_start = np.random.uniform(left_d, right_d)
+
+            noise = np.random.normal(0, 0.2)
+            noise = 0.0
+            yaw_start = AngleOp.normalize_angle(self.raceline.heading_spline(s_start) + noise)
+            x_init, y_init = self.raceline.to_cartesian(s_start, d_start)
+            poses = np.array([[x_init, y_init, yaw_start]], dtype=np.float32)
 
         # check that poses are valid and not off track
         for i in range(self.num_agents):
@@ -560,18 +583,11 @@ class F110Env(gym.Env):
         # call reset to simulator
         self.sim.reset(poses)
 
-        # get no input observations
-        action = np.zeros((self.num_agents, 2))
-        obs, _, _, _, info = self.step(action)
-
-        self.render_obs = {
-            'ego_idx': info['legacy_obs']['ego_idx'],
-            'poses_x': info['legacy_obs']['poses_x'],
-            'poses_y': info['legacy_obs']['poses_y'],
-            'poses_theta': info['legacy_obs']['poses_theta'],
-            'lap_times': info['legacy_obs']['lap_times'],
-            'lap_counts': info['legacy_obs']['lap_counts']
-            }
+        obs = np.zeros((self.num_agents, 7), dtype=np.float32)
+        for i in range(self.num_agents):
+            obs[i, 0] = self.poses_x[i]
+            obs[i, 1] = self.poses_y[i]
+            obs[i, 4] = self.poses_theta[i]
 
         self.total_steps = 0
         self.lap_steps = 0
@@ -585,8 +601,11 @@ class F110Env(gym.Env):
         self.ego_d = d
         self.ego_lap_count = 0
         self.raceline_zones_rendered = False
-        
-        return obs, info
+
+        if F110Env.renderer is not None:
+            F110Env.renderer.remove_tracked_points()
+
+        return obs, {}
 
     def update_map(self, map_path, map_ext):
         """
@@ -651,20 +670,19 @@ class F110Env(gym.Env):
 
         # To draw left and right raceline boundaries
         # x_left, y_left = self.raceline.to_cartesian(self.ego_s, -self.raceline.width_left_spline(self.ego_s))
-        # F110Env.renderer.draw_point(x_left, y_left, size=10, color=(255, 0, 0))
+        # F110Env.renderer.draw_point(x_left, y_left, size=10, color=(255, 0, 0), track=True)
         # x_right, y_right = self.raceline.to_cartesian(self.ego_s, self.raceline.width_right_spline(self.ego_s))
         # F110Env.renderer.draw_point(x_right, y_right, size=10, color=(0, 200, 255))
 
         # Render zones
-        colors = {0: (255, 128, 0), 1: (0, 0, 153), 2: (127, 0, 255)}
-
-        if not self.raceline_zones_rendered:
-            for zone_id, (s_start, s_end, _) in self.raceline.zones.items():
-                x_start, y_start = self.raceline.to_cartesian(s_start, 0.0)
-                x_end, y_end = self.raceline.to_cartesian(s_end, 0.0)
-                F110Env.renderer.draw_point(x_start, y_start, size=10, color=colors[zone_id])
-                F110Env.renderer.draw_point(x_end, y_end, size=10, color=colors[zone_id])
-            self.raceline_zones_rendered = True
+        # colors = {0: (255, 128, 0), 1: (0, 0, 153), 2: (127, 0, 255)}
+        # if not self.raceline_zones_rendered:
+        #     for zone_id, (s_start, s_end, _) in self.raceline.zones.items():
+        #         x_start, y_start = self.raceline.to_cartesian(s_start, 0.0)
+        #         x_end, y_end = self.raceline.to_cartesian(s_end, 0.0)
+        #         F110Env.renderer.draw_point(x_start, y_start, size=10, color=colors[zone_id], track=True)
+        #         F110Env.renderer.draw_point(x_end, y_end, size=10, color=colors[zone_id], track=True)
+        #     self.raceline_zones_rendered = True
 
         for render_callback in F110Env.render_callbacks:
             render_callback(F110Env.renderer)
