@@ -468,7 +468,8 @@ class F110Env(gym.Env):
         if done_off_track_ego or done_lidar_collisions:
             # Here we are just assuming negative reward for going off track, we are not considering collisions with
             # other agents
-            reward -= self.m_yaw_penalty * abs(AngleOp.angle_diff(self.raceline.heading_spline(s), self.poses_theta[self.ego_idx])) + self.q_yaw_penalty
+            angle_diff = AngleOp.angle_diff(self.raceline.heading_spline(s), self.poses_theta[self.ego_idx])
+            reward -= self.m_yaw_penalty * abs(angle_diff) + self.q_yaw_penalty
 
         if done_poly_collisions:
             reward -= 1.0

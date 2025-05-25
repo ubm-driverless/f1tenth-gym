@@ -5,12 +5,34 @@ import numpy as np
 from numba import njit
 from scipy.interpolate import CubicSpline
 
+from f110_gym import ThrottledPrinter
+
 
 class Raceline:
+    @staticmethod
+    def _check_csv_header(filepath: str) -> None:
+        """
+        Check if the csv path provided has the correct header. If not, it prints an UserWarning.
+
+        :param str filepath: Path of the csv file.
+        :return: None.
+        :rtype: None
+        """
+
+        with open(filepath, 'r') as f:
+            line = f.readline()
+
+        # The last char of `line` is `\n`, so we don't consider it
+        if line[:-1] != '# s_m; x_m; y_m; width_right_m; width_left_m; psi_rad; kappa_radpm; vx_mps; ax_mps2':
+            ThrottledPrinter().print('The current csv header of your imported csv is not:\n'
+                                     '# s_m; x_m; y_m; width_right_m; width_left_m; psi_rad; kappa_radpm; vx_mps; ax_mps2\n'
+                                     'This may cause errors', 'yellow')
+
     def __init__(self, raceline_path):
 
         # TODO: handle the case when there is no raceline
 
+        self._check_csv_header(raceline_path)
         data = np.genfromtxt(raceline_path, delimiter=';', dtype='<U32')
         self.n_points = len(data) - 1
         self.total_s = float(data[-1, 0])
@@ -43,7 +65,7 @@ class Raceline:
         self.y_spline = CubicSpline(self.s, self.y, bc_type='periodic')
         self.width_right_spline = CubicSpline(self.s, self.width_right, bc_type='periodic')
         self.width_left_spline = CubicSpline(self.s, self.width_left, bc_type='periodic')
-        self.heading_spline = CubicSpline(self.s, self.heading, bc_type='periodic')
+        self.heading_spline = CubicSpline(self.s, np.unwrap(self.heading), extrapolate='periodic')
         self.curvature_spline = CubicSpline(self.s, self.curvature, bc_type='periodic')
         self.speed_spline = CubicSpline(self.s, self.speed, bc_type='periodic')
 
@@ -131,20 +153,12 @@ class Raceline:
                     break
         if car_zone == self.current_zone or car_zone == -1:
             # The car is in the same zone as before or not in any claimed zone
-
-            # TODO: remove this print statement in production
-            if car_zone != self.current_zone:
-                print('car exited zone:', self.current_zone)
-
             self.current_zone = car_zone
             return {'lap_completed': False, 'lap_time': np.inf, 'lap_orientation': None}
 
         # The car is in a new zone and that zone is not -1
         self.current_zone = car_zone
         self.visit_order.append(car_zone)
-
-        # TODO: remove this print statement in production
-        print('car entered zone:', car_zone)
 
         if len(self.visit_order) != 4:
             if car_zone == 0:
