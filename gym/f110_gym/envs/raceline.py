@@ -82,6 +82,7 @@ class Raceline:
         self.zones = {0: (0.0, self.zones_length, False),
                       1: (0.33 * self.total_s, 0.33 * self.total_s + self.zones_length, False),
                       2: (0.66 * self.total_s, 0.66 * self.total_s + self.zones_length, False)}
+        self.original_zones = self.zones.copy()
         self.visit_order = deque(maxlen=4)
         # Legend:
         # -1: not in any zone (unclaimed area)
@@ -92,14 +93,14 @@ class Raceline:
         self.start_time = None
 
         # Validate zones
-        for zone, (start, end, _) in self.zones.items():
+        for zone, (start, end, _) in self.original_zones.items():
             if start < 0 or end > self.total_s:
                 raise ValueError(f"Zone {zone} is out of raceline bounds: ({start}, {end})")
-        for i in range(len(self.zones) - 1):
+        for i in range(len(self.original_zones) - 1):
             current_zone = i
-            current_start, current_end, _ = self.zones[current_zone]
+            current_start, current_end, _ = self.original_zones[current_zone]
             next_zone = i + 1
-            next_start, next_end, _ = self.zones[next_zone]
+            next_start, next_end, _ = self.original_zones[next_zone]
             if current_end > next_start:
                 raise ValueError(
                     f"Zone {current_zone} (end: {current_end}) overlaps with zone {next_zone} (start: {next_start})")
@@ -108,9 +109,9 @@ class Raceline:
         # `s` is the starting position of the car in the raceline
 
         # Update the zones based on the starting position. Zone 0 is associated with the starting position.
-        len_zones = len(self.zones)
+        len_zones = len(self.original_zones)
         for zone in range(len_zones):
-            start, end, end_wrapped = self.zones[zone]
+            start, end, end_wrapped = self.original_zones[zone]
 
             new_start = (start + s) % self.total_s
             new_end = (end + s) % self.total_s
@@ -194,6 +195,41 @@ class Raceline:
 
         return {'lap_completed': False, 'lap_time': np.inf, 'lap_orientation': None}
 
+    def get_delta_s(self, current_s, previous_s):
+        """
+        Get the delta s between the current and previous s coordinates.
+        :param current_s: current s coordinate
+        :param previous_s: previous s coordinate
+        :return: delta s
+        """
+        # If previous step was close to reach the last s in the forward direction
+        forward_close_to_last_s = bool((self.total_s - previous_s) < (self.total_s / 10))
+        forward_close_to_init_s = bool(current_s < (self.total_s / 10))
+
+        # If the previous step was close to reach the initial s in the backward direction
+        backward_close_to_last_s = bool((self.total_s - current_s) < (self.total_s / 10))
+        backward_close_to_init_s = bool(previous_s < (self.total_s / 10))
+
+        # We don't want to have both forward and backward close to the last s or initial s at the same time
+        # Even if it happens, the delta_s calculation does not fail anyway
+        if forward_close_to_last_s and forward_close_to_init_s:
+            assert not (backward_close_to_last_s and backward_close_to_init_s)
+
+        if backward_close_to_last_s and backward_close_to_init_s:
+            assert not (forward_close_to_last_s and forward_close_to_init_s)
+
+        if current_s < previous_s and forward_close_to_last_s and forward_close_to_init_s:
+            # self.unthrottled_printer.print('We are wrapping around the raceline forward', 'yellow')
+            # We are wrapping around the raceline
+            delta_s = (current_s + self.total_s) - previous_s
+        elif previous_s < current_s and backward_close_to_last_s and backward_close_to_init_s:
+            # self.unthrottled_printer.print('We are wrapping around the raceline backwards', 'yellow')
+            # This should be negative since we don't want to encourage the agent to go backward
+            delta_s = -((self.total_s - current_s) + previous_s)
+        else:
+            delta_s = current_s - previous_s
+
+        return delta_s
 
     def to_cartesian(self, s, d):
         """
@@ -457,4 +493,4 @@ def find_local_minima(distances):
 
     return minima_indices
 
-# raceline = Raceline('/home/edo/unibo/driverless/repos/ubm-f1tenth/raceline/csv/TUM_raceline/TUM_raceline_250514_084549.csv')
+raceline = Raceline('/home/edo/unibo/driverless/repos/ubm-f1tenth/raceline/csv/TUM_raceline/25_03_07.csv')

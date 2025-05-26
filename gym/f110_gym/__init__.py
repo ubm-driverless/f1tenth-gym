@@ -8,6 +8,11 @@ gymnasium.register(
 	entry_point='f110_gym.envs:F110Env',
 )
 
+gymnasium.register(
+	id='f110_relative_obs-v0',
+	entry_point='f110_gym.envs:F110RelativeObsEnv',
+)
+
 
 class ThrottledPrinter:
 	def __init__(self, min_interval=1.0):

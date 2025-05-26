@@ -430,37 +430,12 @@ class F110Env(gym.Env):
             self._check_done(s))
 
         if self.previous_s is not None:
-            # If previous step was close to reach the last s in the forward direction
-            forward_close_to_last_s = bool((self.raceline.total_s - self.previous_s) < (self.raceline.total_s / 10))
-            forward_close_to_init_s = bool(s < (self.raceline.total_s / 10))
-
-            # If the previous step was close to reach the initial s in the backward direction
-            backward_close_to_last_s = bool((self.raceline.total_s - s) < (self.raceline.total_s / 10))
-            backward_close_to_init_s = bool(self.previous_s < (self.raceline.total_s / 10))
-
-            # We don't want to have both forward and backward close to the last s or initial s at the same time
-            # Even if it happens, the delta_s calculation does not fail anyway
-            if forward_close_to_last_s and forward_close_to_init_s:
-                assert not (backward_close_to_last_s and backward_close_to_init_s)
-
-            if backward_close_to_last_s and backward_close_to_init_s:
-                assert not (forward_close_to_last_s and forward_close_to_init_s)
-
-            if s < self.previous_s and forward_close_to_last_s and forward_close_to_init_s:
-                # self.unthrottled_printer.print('We are wrapping around the raceline forward', 'yellow')
-                # We are wrapping around the raceline
-                delta_s = (s + self.raceline.total_s) - self.previous_s
-            elif self.previous_s < s and backward_close_to_last_s and backward_close_to_init_s:
-                # self.unthrottled_printer.print('We are wrapping around the raceline backwards', 'yellow')
-                # This should be positive if the controller is purposely driving backwards
-                delta_s = -((self.raceline.total_s - s) + self.previous_s)
-            else:
-                delta_s = s - self.previous_s
+            delta_s = self.raceline.get_delta_s(s, self.previous_s)
         else:
-            # Not projecting on s spline, so we just use the distance between the two points
+            # Not projecting on s-spline, so we just use the Euclidean distance between the two points
             delta_s = math.sqrt((x - old_x) ** 2 + (y - old_y) ** 2)
 
-        if delta_s > 2.0:
+        if abs(delta_s) > 2.0:
             # TODO: test if it ever happens
             self.unthrottled_printer.print(f'delta_s is too large: {delta_s} - id: {self.total_steps}', 'red')
 
@@ -553,7 +528,6 @@ class F110Env(gym.Env):
             d_start = np.random.uniform(left_d, right_d)
 
             noise = np.random.normal(0, 0.2)
-            noise = 0.0
             yaw_start = AngleOp.normalize_angle(self.raceline.heading_spline(s_start) + noise)
             x_init, y_init = self.raceline.to_cartesian(s_start, d_start)
             poses = np.array([[x_init, y_init, yaw_start]], dtype=np.float32)
