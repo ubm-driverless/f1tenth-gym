@@ -4,6 +4,9 @@ import time
 import numpy as np
 from numba import njit
 from scipy.interpolate import CubicSpline
+from shapely.geometry import Polygon, box
+from shapely.affinity import translate, rotate
+from shapely.prepared import prep
 
 from f110_gym import ThrottledPrinter
 
@@ -78,6 +81,22 @@ class Raceline:
         self.curvature = self.curvature[:-1]
         self.speed = self.speed[:-1]
 
+        # Creating shapely polygon of the track
+        loop1 = [self.to_cartesian(s, self.width_right_spline(s)) for s in self.s]
+        loop2 = [self.to_cartesian(s, -self.width_left_spline(s)) for s in self.s]
+
+        poly1 = Polygon(loop1)
+        poly2 = Polygon(loop2)
+        if poly1.contains(poly2):
+            outer_loop, inner_loop = loop1, loop2
+        elif poly2.contains(poly1):
+            outer_loop, inner_loop = loop2, loop1
+        else:
+            raise ValueError("Neither track border polygon nests cleanly inside the other")
+
+        self.track_polygon = Polygon(shell=outer_loop, holes=[inner_loop])
+        self.track_polygon = prep(self.track_polygon)
+
         self.zones_length = 2.0 # meters
         self.zones = {0: (0.0, self.zones_length, False),
                       1: (0.33 * self.total_s, 0.33 * self.total_s + self.zones_length, False),
@@ -129,6 +148,13 @@ class Raceline:
         self.visit_order.clear()
         self.current_zone = -1
         self.start_time = None
+
+    def is_colliding_with_track(self, x, y, yaw, car_width, car_length):
+        car_rect = box(-car_length / 2, -car_width / 2, car_length / 2, car_width / 2)
+        car_rect = rotate(car_rect, yaw, origin=(0, 0), use_radians=True)
+        car_rect = translate(car_rect, x, y)
+
+        return not self.track_polygon.contains(car_rect)
 
     def is_lap_completed(self, s):
         """
@@ -492,5 +518,3 @@ def find_local_minima(distances):
             i += 1
 
     return minima_indices
-
-raceline = Raceline('/home/edo/unibo/driverless/repos/ubm-f1tenth/raceline/csv/TUM_raceline/25_03_07.csv')

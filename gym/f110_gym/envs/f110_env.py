@@ -84,6 +84,10 @@ class F110Env(gym.Env):
             print('Render mode:', self.render_mode)
         except:
             self.render_mode = None
+        try:
+            self.disable_scan_simulator = kwargs['disable_scan_simulator']
+        except:
+            self.disable_scan_simulator = False
 
         # kwargs extraction
         try:
@@ -247,7 +251,8 @@ class F110Env(gym.Env):
         self.lap_counts = np.zeros((self.num_agents, ))
 
         # initiate stuff
-        self.sim = Simulator(self.params, self.num_agents, self.seed, time_step=self.timestep, integrator=self.integrator)
+        self.sim = Simulator(self.params, self.num_agents, self.seed, time_step=self.timestep,
+                             integrator=self.integrator, disable_scan_simulator=self.disable_scan_simulator)
         self.sim.set_map(self.map_path, self.map_ext)
 
         self.total_steps = 0
@@ -350,19 +355,24 @@ class F110Env(gym.Env):
             self.off_track[i] = 0.
             if not self.is_inside_track(self.poses_x[i], self.poses_y[i]):
                 self.off_track[i] = 1.
-                self.throttled_printer.print(f"Agent {i} is off track: ({self.poses_x[i]}, {self.poses_y[i]})", 'yellow')
+                self.throttled_printer.print(f"Agent {i} is off track: ({self.poses_x[i]}, {self.poses_y[i]})",
+                                             'yellow')
 
             if F110Env.renderer is not None:
                 F110Env.renderer.draw_point(self.poses_x[i], self.poses_y[i], size=4, track=True)
 
         done_poly_collisions = bool(self.polygon_collisions[self.ego_idx])
-        done_lidar_collisions = bool(self.lidar_collisions[self.ego_idx])
         done_laps_ego = bool(self.ego_lap_count >= 2)
         done_off_track_ego = bool(self.off_track[self.ego_idx])
+        done_shapely_collisions = bool(self.raceline.is_colliding_with_track(self.poses_x[self.ego_idx],
+                                                                             self.poses_y[self.ego_idx],
+                                                                             self.poses_theta[self.ego_idx],
+                                                                             self.params['width'],
+                                                                             self.params['length']))
 
-        done = done_off_track_ego or done_poly_collisions or done_lidar_collisions
-        
-        return done, done_poly_collisions, done_lidar_collisions, done_laps_ego, done_off_track_ego, lap_info
+        done = done_off_track_ego or done_poly_collisions or done_shapely_collisions
+
+        return done, done_poly_collisions, done_laps_ego, done_off_track_ego, done_shapely_collisions, lap_info
 
     def _update_state(self, obs_dict):
         """
@@ -426,8 +436,11 @@ class F110Env(gym.Env):
         nearest_index, s, d, status = self.raceline.get_nearest_index(x, y, self.previous_s)
 
         # check done
-        done, done_poly_collisions, done_lidar_collisions, done_laps_ego, done_off_track_ego, lap_info = (
-            self._check_done(s))
+        done, done_poly_collisions, done_laps_ego, done_off_track_ego, done_shapely_collisions, lap_info = \
+            self._check_done(s)
+
+        if done_shapely_collisions:
+            self.unthrottled_printer.print(f'done_shapely_collisions: {done_shapely_collisions}', 'red')
 
         if self.previous_s is not None:
             delta_s = self.raceline.get_delta_s(s, self.previous_s)
@@ -449,7 +462,7 @@ class F110Env(gym.Env):
         terminated = done  # if not recoverable off track or collision with another agent
         truncated = done_laps_ego  # if laps completed
 
-        if done_off_track_ego or done_lidar_collisions:
+        if done_off_track_ego or done_shapely_collisions:
             # Here we are just assuming negative reward for going off track, we are not considering collisions with
             # other agents
             angle_diff = AngleOp.angle_diff(self.raceline.heading_spline(s), self.poses_theta[self.ego_idx])
@@ -463,7 +476,8 @@ class F110Env(gym.Env):
             # We make the RL model confused by giving it a reward for completing the lap. In the observation space,
             # there is no proxy for lap completion, so that reward would be completely unexpected. Then, let's
             # just truncate the episode.
-            self.throttled_printer.print(f'Ego completed {self.ego_lap_count} laps', 'green')
+            # self.throttled_printer.print(f'Ego completed {self.ego_lap_count} laps', 'green')
+            pass
 
         info = self._get_info()
         info.update({'legacy_obs': obs})

@@ -11,6 +11,7 @@ setup(name='f110_gym',
                         'Pillow',
                         'scipy',
                         'numba',
+                        'shapely',
                         'pyyaml',
                         'pyglet<1.5',
                         'pyopengl']

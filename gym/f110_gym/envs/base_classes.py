@@ -68,7 +68,15 @@ class RaceCar(object):
     scan_angles = None
     side_distances = None
 
-    def __init__(self, params, seed, is_ego=False, time_step=0.01, num_beams=1080, fov=4.7, integrator=Integrator.Euler):
+    def __init__(self,
+                 params,
+                 seed,
+                 is_ego=False,
+                 time_step=0.01,
+                 disable_scan_simulator=False,
+                 num_beams=1080,
+                 fov=4.7,
+                 integrator=Integrator.Euler):
         """
         Init function
 
@@ -76,6 +84,7 @@ class RaceCar(object):
             params (dict): vehicle parameter dictionary, includes {'mu', 'C_Sf', 'C_Sr', 'lf', 'lr', 'h', 'm', 'I', 's_min', 's_max', 'sv_min', 'sv_max', 'v_switch', 'a_max': 9.51, 'v_min', 'v_max', 'length', 'width'}
             is_ego (bool, default=False): ego identifier
             time_step (float, default=0.01): physics sim time step
+            disable_scan_simulator (bool, default=False): disable scan simulator
             num_beams (int, default=1080): number of beams in the laser scan
             fov (float, default=4.7): field of view of the laser
 
@@ -88,6 +97,7 @@ class RaceCar(object):
         self.seed = seed
         self.is_ego = is_ego
         self.time_step = time_step
+        self.disable_scan_simulator = disable_scan_simulator
         self.num_beams = num_beams
         self.fov = fov
         self.integrator = integrator
@@ -118,6 +128,8 @@ class RaceCar(object):
         self.ttc_thresh = 0.005
 
         # initialize scan sim
+        if self.disable_scan_simulator:
+            return
         if RaceCar.scan_simulator is None:
             self.scan_rng = np.random.default_rng(seed=self.seed)
             RaceCar.scan_simulator = ScanSimulator2D(num_beams, fov)
@@ -181,7 +193,8 @@ class RaceCar(object):
             map_path (str): absolute path to the map yaml file
             map_ext (str): extension of the map image file
         """
-        RaceCar.scan_simulator.set_map(map_path, map_ext)
+        if not self.disable_scan_simulator:
+            RaceCar.scan_simulator.set_map(map_path, map_ext)
 
     def reset(self, pose):
         """
@@ -248,11 +261,11 @@ class RaceCar(object):
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]
 
         # if in collision stop vehicle
-        if in_collision:
-            self.state[3] = 0.
-            self.state[5:] = 0.
-            self.accel = 0.0
-            self.steer_angle_vel = 0.0
+        # if in_collision:
+        #     self.state[3] = 0.
+        #     self.state[5:] = 0.
+        #     self.accel = 0.0
+        #     self.steer_angle_vel = 0.0
 
         # update state
         self.in_collision = in_collision
@@ -410,8 +423,11 @@ class RaceCar(object):
 
         self.state[4] = AngleOp.normalize_angle(self.state[4])
 
-        # update scan
-        current_scan = RaceCar.scan_simulator.scan(np.append(self.state[0:2], self.state[4]), self.scan_rng)
+        if not self.disable_scan_simulator:
+            # update scan
+            current_scan = RaceCar.scan_simulator.scan(np.append(self.state[0:2], self.state[4]), self.scan_rng)
+        else:
+            current_scan = None
 
         return current_scan
 
@@ -465,7 +481,14 @@ class Simulator(object):
 
     """
 
-    def __init__(self, params, num_agents, seed, time_step=0.01, ego_idx=0, integrator=Integrator.RK4):
+    def __init__(self,
+                 params,
+                 num_agents,
+                 seed,
+                 time_step=0.01,
+                 disable_scan_simulator=False,
+                 ego_idx=0,
+                 integrator=Integrator.RK4):
         """
         Init function
 
@@ -474,6 +497,7 @@ class Simulator(object):
             num_agents (int): number of agents in the environment
             seed (int): seed of the rng in scan simulation
             time_step (float, default=0.01): physics time step
+            disable_scan_simulator (bool, default=False): disable scan simulator
             ego_idx (int, default=0): ego vehicle's index in list of agents
 
         Returns:
@@ -482,6 +506,7 @@ class Simulator(object):
         self.num_agents = num_agents
         self.seed = seed
         self.time_step = time_step
+        self.disable_scan_simulator = disable_scan_simulator
         self.ego_idx = ego_idx
         self.params = params
         self.agent_poses = np.empty((self.num_agents, 3))
@@ -493,10 +518,12 @@ class Simulator(object):
         # initializing agents
         for i in range(self.num_agents):
             if i == ego_idx:
-                ego_car = RaceCar(params, self.seed, is_ego=True, time_step=self.time_step, integrator=integrator)
+                ego_car = RaceCar(params, self.seed, is_ego=True, time_step=self.time_step, integrator=integrator,
+                                  disable_scan_simulator=self.disable_scan_simulator)
                 self.agents.append(ego_car)
             else:
-                agent = RaceCar(params, self.seed, is_ego=False, time_step=self.time_step, integrator=integrator)
+                agent = RaceCar(params, self.seed, is_ego=False, time_step=self.time_step, integrator=integrator,
+                                disable_scan_simulator=self.disable_scan_simulator)
                 self.agents.append(agent)
 
     def set_map(self, map_path, map_ext):
@@ -579,19 +606,20 @@ class Simulator(object):
         # check collisions between all agents
         self.check_collision()
 
-        for i, agent in enumerate(self.agents):
-            # update agent's information on other agents
-            opp_poses = np.concatenate((self.agent_poses[0:i, :], self.agent_poses[i+1:, :]), axis=0)
-            agent.update_opp_poses(opp_poses)
+        if not self.disable_scan_simulator:
+            for i, agent in enumerate(self.agents):
+                # update agent's information on other agents
+                opp_poses = np.concatenate((self.agent_poses[0:i, :], self.agent_poses[i+1:, :]), axis=0)
+                agent.update_opp_poses(opp_poses)
 
-            # update each agent's current scan based on other agents
-            agent.update_scan(agent_scans, i)
+                # update each agent's current scan based on other agents
+                agent.update_scan(agent_scans, i)
 
-            # update agent collision with environment
-            if agent.in_collision:
-                self.lidar_collisions[i] = 1.
-            else:
-                self.lidar_collisions[i] = 0.
+                # update agent collision with environment
+                if agent.in_collision:
+                    self.lidar_collisions[i] = 1.
+                else:
+                    self.lidar_collisions[i] = 0.
 
         # fill in observations
         # state is [x, y, steer_angle, vel, yaw_angle, yaw_rate, slip_angle]

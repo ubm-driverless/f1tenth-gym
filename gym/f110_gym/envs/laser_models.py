@@ -50,6 +50,8 @@ def get_dt(bitmap, resolution):
             dt (numpy.ndarray, (n, m)): output distance matrix, where each cell has the corresponding distance (in meters) to the closest obstacle
     """
     dt = resolution * edt(bitmap)
+    print('LiDAR simulation on - Computed distance transform with shape:', dt.shape)
+
     return dt
 
 @njit(cache=True)
