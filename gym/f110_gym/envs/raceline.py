@@ -85,17 +85,16 @@ class Raceline:
         loop1 = [self.to_cartesian(s, self.width_right_spline(s)) for s in self.s]
         loop2 = [self.to_cartesian(s, -self.width_left_spline(s)) for s in self.s]
 
-        poly1 = Polygon(loop1)
-        poly2 = Polygon(loop2)
+        poly1 = Polygon(loop1).buffer(0) # buffer(0) is used to ensure the polygon is valid
+        poly2 = Polygon(loop2).buffer(0)
         if poly1.contains(poly2):
-            outer_loop, inner_loop = loop1, loop2
+            final_poly = poly1.difference(poly2)
         elif poly2.contains(poly1):
-            outer_loop, inner_loop = loop2, loop1
+            final_poly = poly2.difference(poly1)
         else:
             raise ValueError("Neither track border polygon nests cleanly inside the other")
 
-        self.track_polygon = Polygon(shell=outer_loop, holes=[inner_loop])
-        self.track_polygon = prep(self.track_polygon)
+        self.track_polygon = prep(final_poly)
 
         self.zones_length = 2.0 # meters
         self.zones = {0: (0.0, self.zones_length, False),
