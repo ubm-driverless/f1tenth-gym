@@ -110,7 +110,9 @@ class EnvRenderer(pyglet.window.Window):
 
         self.fps_display = pyglet.window.FPSDisplay(self)
 
+        self.map_tracked_points = []
         self.tracked_points = []
+        self.raceline_points = []
 
     def remove_tracked_points(self):
         for point in self.tracked_points:
@@ -131,8 +133,19 @@ class EnvRenderer(pyglet.window.Window):
         if raceline is None:
             raise ValueError('Raceline not provided to the renderer')
 
+        for point in self.raceline_points:
+            point.delete()
+        self.raceline_points.clear()
+
         for x, y in zip(raceline.x, raceline.y):
-            self.draw_point(x, y, color=(0, 255, 0), track=False)
+            scaled_x = 50.0 * x
+            scaled_y = 50.0 * y
+
+            point = self.batch.add(1, GL_POINTS, None,
+                                   ('v3f/stream', [scaled_x, scaled_y, 0.0]),
+                                   ('c3B/stream', (0, 255, 0)))
+
+            self.raceline_points.append(point)
 
     def update_map(self, map_path, map_ext):
         """
@@ -145,6 +158,10 @@ class EnvRenderer(pyglet.window.Window):
         Returns:
             None
         """
+
+        for point in self.map_tracked_points:
+            point.delete()
+        self.map_tracked_points.clear()
 
         # load map metadata
         with open(map_path + '.yaml', 'r') as yaml_stream:
@@ -177,7 +194,11 @@ class EnvRenderer(pyglet.window.Window):
         map_mask_flat = map_mask.flatten()
         map_points = 50. * map_coords[:, map_mask_flat].T
         for i in range(map_points.shape[0]):
-            self.batch.add(1, GL_POINTS, None, ('v3f/stream', [map_points[i, 0], map_points[i, 1], map_points[i, 2]]), ('c3B/stream', [183, 193, 222]))
+            point = self.batch.add(1, GL_POINTS, None,
+                                   ('v3f/stream', [map_points[i, 0], map_points[i, 1], map_points[i, 2]]),
+                                   ('c3B/stream', [183, 193, 222]))
+            self.map_tracked_points.append(point)
+
         self.map_points = map_points
 
     def on_resize(self, width, height):

@@ -439,9 +439,6 @@ class F110Env(gym.Env):
         done, done_poly_collisions, done_laps_ego, done_off_track_ego, done_shapely_collisions, lap_info = \
             self._check_done(s)
 
-        if done_shapely_collisions:
-            self.unthrottled_printer.print(f'done_shapely_collisions: {done_shapely_collisions}', 'red')
-
         if self.previous_s is not None:
             delta_s = self.raceline.get_delta_s(s, self.previous_s)
         else:
