@@ -480,6 +480,9 @@ class F110Env(gym.Env):
         info.update({'legacy_obs': obs})
         info.update(lap_info)
 
+        collision = done_poly_collisions or done_shapely_collisions or done_off_track_ego
+        info['collision'] = collision
+
         self.previous_s = s
         self.ego_s = s
         self.ego_d = d
@@ -546,7 +549,14 @@ class F110Env(gym.Env):
         # check that poses are valid and not off track
         for i in range(self.num_agents):
             if not self.is_inside_track(float(poses[i, 0]), float(poses[i, 1])):
-                raise gym.error.Error(f"Agent {i} pose is off track: ({poses[i, 0]}, {poses[i, 1]})")
+                self.throttled_printer.print(f"Agent {i} pose is off track. Repositioning...", 'yellow')
+                s_new = np.random.uniform(0, self.raceline.total_s)
+                d_new = 0.0
+                x_new, y_new = self.raceline.to_cartesian(s_new, d_new)
+                yaw_new = self.raceline.heading_spline(s_new)
+                poses[i, 0] = x_new
+                poses[i, 1] = y_new
+                poses[i, 2] = yaw_new
 
         # reset counters and data members
         self.poses_x = []
